@@ -135,8 +135,53 @@ void pass1(){
 }
 
 void pass2(){
+    int idx = 0;
+    int base = 0;
+    int count = 0;
+    while(idx < tokenlist.size()){
+        //createModule
+        int base_addr = base
+        int defcount;
+        int usecount;
+        int instcount;
 
+	if(defcount = readInt(tokenlist[idx].token)){
+                for(int i=0; i < defcount; i++){
+                        char* sym = readSym(tokenlist[idx + 2*i + 1].token);
+                        int val = readInt(tokenlist[idx + 2*i + 2].token);
+                }
+        }
+	idx += defcount * 2 + 1;
+	if(usecount = readInt(tokenlist[idx].token)){
+                for(int i=0; i < usecount; i++){
+                        char* sym = readSym(tokenlist[idx + i].token);
+                }
+        }
+        idx += usecount + 1;
+	if(instcount = readInt(tokenlist[idx].token)){
+                for(int i=0; i < instcount; i++){
+                        char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
+                        int operand = readInt(tokenlist[idx + 2*i + 2].token);
+                	//various checks
+                	if(addressmode == "R"){
+				operand += base;
+				cout << count << " " << operand << endl;
+			}
+			else if(addressmode == "E"){
+				
+			}
+			else if(addressmode == "I"){
+
+			}
+			else if(addressmode == "A"){
+			
+			}
+                }
+	} 
+        idx += instcount * 2 + 1;
+        base += instcount;
 }
+
 int main(){
 
 	getToken();
