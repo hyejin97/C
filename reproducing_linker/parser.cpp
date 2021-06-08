@@ -33,7 +33,7 @@ struct Symbol {
 
 vector<Token> tokenlist;
 vector<Symbol> symbtable;
-
+vector<char*> uselist;
 //get token, line, lineoffset
 void getToken(){
 	//getline
@@ -89,26 +89,51 @@ char* readIEAR(char* tok){
 	else return NULL;
 }
 
-
+int findSymbol(char* target_sym){
+	for(int s = 0; s < symbtable.size(); s++){
+		if(symbtable[s].token == target_sym){
+			target_addr = symbtable[s].addr;
+			return target_addr;
+		}
+	}
+	return -1;
+}
 
 void pass1(){
     //while not EOF
     int idx = 0;
     int base = 0; 
     while(idx < tokenlist.size()){
-    	//createModule
-   	int base_addr = base; 
+	//createModule
+	int base_addr = base; 
 	int defcount;
 	int usecount;
 	int instcount;
 	if(defcount = readInt(tokenlist[idx].token)){
-        	for(int i=0; i < defcount; i++){
+		for(int i=0; i < defcount; i++){
 			char* sym = readSym(tokenlist[idx + 2*i + 1].token);
 			int val = readInt(tokenlist[idx + 2*i + 2].token);
- 			struct Symbol symb_el;
+			//Syntax error checking : missing token
+			if(!sym && !val){
+
+				return;
+			}
+			//Syntax error checking : unexpected token
+			if(!sym){
+
+				return;
+			}
+			if(findSymbol(sym) != -1){
+				//error2 : symbol already exists
+				cout << sym << "=" << val << " Error: This variable is multiple times defined; first value used" << endl;
+				continue;
+			}
+			//create symbol
+			struct Symbol symb_el;
 			strcpy(symb_el.token, sym);
 			symb_el.addr = base + val;
 			symbtable.push_back(symb_el);
+			cout << sym << "=" << val << endl;
 		}
 	}
 	idx += defcount * 2 + 1;
@@ -122,10 +147,10 @@ void pass1(){
 	//cout << "use : " << usecount << "idx" << idx << " " << tokenlist[idx].token << endl;
 	if(instcount = readInt(tokenlist[idx].token)){
 		for(int i=0; i < instcount; i++){
- 			char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
+			char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
 			int operand = readInt(tokenlist[idx + 2*i + 2].token);
-		//various checks
-		//..
+			//various checks
+			//..
 		}	
 	}
 	idx += instcount * 2 + 1;
@@ -133,6 +158,7 @@ void pass1(){
 	//cout << "inst : " << instcount << "idx " << idx << " " << tokenlist[idx].token << endl;
     }
 }
+
 
 void pass2(){
     int idx = 0;
@@ -146,40 +172,45 @@ void pass2(){
         int instcount;
 
 	if(defcount = readInt(tokenlist[idx].token)){
-                for(int i=0; i < defcount; i++){
-                        char* sym = readSym(tokenlist[idx + 2*i + 1].token);
-                        int val = readInt(tokenlist[idx + 2*i + 2].token);
-                }
-        }
+		for(int i=0; i < defcount; i++){
+	    		char* sym = readSym(tokenlist[idx + 2*i + 1].token);
+	    		int val = readInt(tokenlist[idx + 2*i + 2].token);
+		}
+    	}
 	idx += defcount * 2 + 1;
 	if(usecount = readInt(tokenlist[idx].token)){
-                for(int i=0; i < usecount; i++){
-                        char* sym = readSym(tokenlist[idx + i].token);
-                }
-        }
-        idx += usecount + 1;
+		for(int i=0; i < usecount; i++){
+	    	char* sym = readSym(tokenlist[idx + i].token);
+			uselist.push_back(sym);
+		}
+    	}
+    	idx += usecount + 1;
 	if(instcount = readInt(tokenlist[idx].token)){
-                for(int i=0; i < instcount; i++){
-                        char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
-                        int operand = readInt(tokenlist[idx + 2*i + 2].token);
-                	//various checks
-                	if(addressmode == "R"){
+		for(int i=0; i < instcount; i++){
+	    		char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
+	    		int operand = readInt(tokenlist[idx + 2*i + 2].token);
+	    		//various checks
+	    		if(addressmode == "R"){
 				operand += base;
-				cout << count << " " << operand << endl;
 			}
 			else if(addressmode == "E"){
-				
+				int ref = operand % 1000;
+				char* target_sym = uselist[ref];
+				int target_addr = findSymbol(target_sym);
+				if(target_addr != -1) operand += target_addr;
 			}
 			else if(addressmode == "I"){
-
+				//an immediate operand is unchanged
 			}
 			else if(addressmode == "A"){
-			
+				//operand is the absolute address
 			}
-                }
-	} 
-        idx += instcount * 2 + 1;
-        base += instcount;
+			cout << count << " " << operand << endl;
+		}
+    	}
+    	idx += instcount * 2 + 1;
+    	base += instcount;
+    }
 }
 
 int main(){
@@ -191,7 +222,7 @@ int main(){
 	}	
 **/	
 	pass1();
-	for(int i = 0; i < symbtable.size(); i++){
-                cout << symbtable[i].token << "=" << symbtable[i].addr << endl;
-        }	
+	// for(int i = 0; i < symbtable.size(); i++){
+ //        cout << symbtable[i].token << "=" << symbtable[i].addr << endl;
+ //    }	
 }
