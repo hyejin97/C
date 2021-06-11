@@ -6,7 +6,7 @@
 #include <vector>
 
 using namespace std;
-/**
+
 void __parseerror(int linenum, int lineoffset, int errcode) {
 	static char* errstr[] = {
 		"NUM_EXPECTED", // Number expect, anything >= 2^30 is not a number either
@@ -15,11 +15,11 @@ void __parseerror(int linenum, int lineoffset, int errcode) {
 		"SYM_TOO_LONG", // Symbol Name is too long
 		"TOO_MANY_DEF_IN_MODULE", // > 16
 		"TOO_MANY_USE_IN_MODULE", // > 16
-		"TOO_MANY_INSTR”, // total num_instr exceeds memory size (512)
+		"TOO_MANY_INSTR", // total num_instr exceeds memory size (512)
 	};
-	printf("Parse Error line %d offset %d: %s\n", linenum, lineoffset, errstr[errcode]);
+	cout<< "Parse Error line " << linenum << "offset " << lineoffset << ": " << errstr[errcode] << endl; 
 }
-**/
+
 struct Token {
 	char token[16];
 	int line;
@@ -29,11 +29,12 @@ struct Token {
 struct Symbol {
 	char token[16];
 	int addr;
+	int modulenum;
 } symbol;
 
 vector<Token> tokenlist;
 vector<Symbol> symbtable;
-vector<char*> uselist;
+
 //get token, line, lineoffset
 void getToken(){
 	//getline
@@ -63,68 +64,91 @@ void getToken(){
 }
 
 
-int readInt(char* tok){
+int readInt(char tok[], int line, int offset){
 	for(int i = 0; i < strlen(tok); i++){
-		if(!isdigit(tok[i])) return NULL;
+		if(!isdigit(tok[i])){
+			__parseerror(line, offset, 0);	
+			return -1;
+		}
 	}
 	return atoi(tok);
 
 }
 
-char* readSym(char* tok){
-	if((int)strlen(tok) > 16) return NULL; //len of symb can't be over 16
-	
-	if(isdigit(tok[0])) return NULL; //symb must start with alpha
-
+int readSym(char tok[], int line, int offset){
+//-1 : two many characters, 0 : invalid symbol, 1 : valid symbol
+	if((int)strlen(tok) > 16){
+		__parseerror(line, offset, 3);	
+		return -1; //len of symb can't be over 16
+	}
+	if(isdigit(tok[0])){
+		__parseerror(line, offset, 1);
+		return 0; //symb must start with alpha
+	}
 	for(int i = 0; i < strlen(tok); i++){
 		if(isalpha(tok[i]) || isalnum(tok[i]) || isdigit(tok[i])) continue;
-		else return NULL;
-	}
-	return tok;
-
-}
-
-char* readIEAR(char* tok){
-	if(*tok == 'I' || *tok == 'A' || *tok == 'E' || *tok == 'R') return tok;
-	else return NULL;
-}
-
-int findSymbol(char* target_sym){
-	for(int s = 0; s < symbtable.size(); s++){
-		if(symbtable[s].token == target_sym){
-			target_addr = symbtable[s].addr;
-			return target_addr;
+		else{
+			__parseerror(line, offset, 1);
+			return 0;
 		}
 	}
-	return -1;
+	return 1;
+
 }
 
+bool readIEAR(char tok[], int line, int offset){
+	if(strcmp(tok, "I") == 0 || strcmp(tok, "A") == 0 || strcmp(tok, "E") == 0 || strcmp(tok, "R") == 0) return true;
+	else{
+		__parseerror(line, offset, 2);	
+		return false;
+	}
+}
+
+Symbol findSymbol(char* target_sym){
+	struct Symbol notfound = {NULL, NULL, NULL};
+	for(int s = 0; s < symbtable.size(); s++){
+		if(strcmp(symbtable[s].token, target_sym) == 0){
+			return symbtable[s];
+		}
+	}
+	return notfound;
+}
+
+//Parse error checking, create symbol table
 void pass1(){
-    //while not EOF
     int idx = 0;
     int base = 0; 
+    int modulenum = 1;
     while(idx < tokenlist.size()){
 	//createModule
-	int base_addr = base; 
 	int defcount;
 	int usecount;
 	int instcount;
-	if(defcount = readInt(tokenlist[idx].token)){
+	vector<Symbol> moduledefs; //defined symbs per module
+
+	if(defcount = readInt(tokenlist[idx].token, tokenlist[idx].line, tokenlist[idx].offset)){
+		if(defcount > 16){
+			__parseerror(tokenlist[idx].line, tokenlist[idx].offset, 4);
+			return;	
+		}
 		for(int i=0; i < defcount; i++){
-			char* sym = readSym(tokenlist[idx + 2*i + 1].token);
-			int val = readInt(tokenlist[idx + 2*i + 2].token);
-			//Syntax error checking : missing token
-			if(!sym && !val){
-
+			char* sym = tokenlist[idx + 2*i + 1].token;
+			int val = readInt(tokenlist[idx + 2*i + 2].token, tokenlist[idx + 2*i + 2].line, tokenlist[idx + 2*i + 2].offset);
+/**
+			//TODO : Syntax error checking : missing token
+			if(){
+				
 				return;
 			}
-			//Syntax error checking : unexpected token
-			if(!sym){
+**/			
+		//Parse error : unexpected token (symbol expected)
+			if(readSym(sym, tokenlist[idx + 2*i + 1].line, tokenlist[idx + 2*i + 1].offset) <= 0) return;
 
-				return;
-			}
-			if(findSymbol(sym) != -1){
-				//error2 : symbol already exists
+			//Parse error : unexpexted token (integer expected)
+			if(val < 0) return;
+			
+			//Rule2 : symbol already exists
+			if(findSymbol(sym).addr > 0){
 				cout << sym << "=" << val << " Error: This variable is multiple times defined; first value used" << endl;
 				continue;
 			}
@@ -132,97 +156,158 @@ void pass1(){
 			struct Symbol symb_el;
 			strcpy(symb_el.token, sym);
 			symb_el.addr = base + val;
+			symb_el.modulenum = modulenum;
 			symbtable.push_back(symb_el);
-			cout << sym << "=" << val << endl;
+			moduledefs.push_back(symb_el);
 		}
 	}
+	else if(defcount < 0) return;
+
 	idx += defcount * 2 + 1;
-	//cout << idx << endl;
-	if(usecount = readInt(tokenlist[idx].token)){
+	if(usecount = readInt(tokenlist[idx].token, tokenlist[idx].line, tokenlist[idx].offset)){
+		if(usecount > 16){
+			__parseerror(tokenlist[idx].line, tokenlist[idx].offset, 5);
+			return;		
+		}
 		for(int i=0; i < usecount; i++){
-			char* sym = readSym(tokenlist[idx + i].token);
+			char* sym = tokenlist[idx + i + 1].token;
+/**
+			//TODO : syntax error : missing token
+			if(){
+			
+			}
+**/
+			//Parse error : unexpected  token (symbol expected)
+			if(readSym(sym, tokenlist[idx + i + 1].line, tokenlist[idx + i + 1].offset) <= 0) return;
+			
 		}
 	}
+	else if(usecount < 0) return;
+
+
 	idx += usecount + 1;
-	//cout << "use : " << usecount << "idx" << idx << " " << tokenlist[idx].token << endl;
-	if(instcount = readInt(tokenlist[idx].token)){
+	if(instcount = readInt(tokenlist[idx].token, tokenlist[idx].line, tokenlist[idx].offset)){
 		for(int i=0; i < instcount; i++){
-			char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
-			int operand = readInt(tokenlist[idx + 2*i + 2].token);
+			char* addressmode = tokenlist[idx + 2*i + 1].token;
+			int operand = readInt(tokenlist[idx + 2*i + 2].token, tokenlist[idx + 2*i + 2].line, tokenlist[idx + 2*i + 2].offset);
 			//various checks
-			//..
+			//
+			//Parse error : unexpected token (addr expected)
+			if(!readIEAR(addressmode, tokenlist[idx + 2*i + 1].line, tokenlist[idx + 2*i + 1].offset)) return;
+			//Parse error : unexpected token (integer expected)
+			if(operand < 0) return;
 		}	
 	}
-	idx += instcount * 2 + 1;
-	base += instcount;
-	//cout << "inst : " << instcount << "idx " << idx << " " << tokenlist[idx].token << endl;
+	else if(instcount < 0) return;
+
+	int modulesize = instcount * 2 + 1;
+ 	idx += modulesize;
+        base += instcount;
+        modulenum++;
+
+	//print warnings 
+	//Rule5 : 
+	for(int i=0; i < moduledefs.size(); i++){
+		if(moduledefs[i].addr > modulesize){
+			cout << "Warning: Module " << moduledefs[i].modulenum << ": " << moduledefs[i].token << " too big " << moduledefs[i].addr << " (max=" << modulesize << ") assume zero relative\n";
+			moduledefs[i].addr = 0;	
+		}
+	}
     }
 }
 
 
 void pass2(){
-    int idx = 0;
-    int base = 0;
-    int count = 0;
+    int idx = 0; //index for token
+    int base = 0; //base address
+    int count = 0; //instruction count
+    int modulenum = 1;
+
+    vector<Symbol> isused = symbtable;
+
     while(idx < tokenlist.size()){
         //createModule
-        int base_addr = base
         int defcount;
         int usecount;
         int instcount;
+	vector<char*> uselist;
 
-	if(defcount = readInt(tokenlist[idx].token)){
+	if(defcount = readInt(tokenlist[idx].token, tokenlist[idx].line, tokenlist[idx].offset)){
 		for(int i=0; i < defcount; i++){
-	    		char* sym = readSym(tokenlist[idx + 2*i + 1].token);
-	    		int val = readInt(tokenlist[idx + 2*i + 2].token);
+	    		char* sym = tokenlist[idx + 2*i + 1].token;
+			int val = readInt(tokenlist[idx + 2*i + 2].token, tokenlist[idx + 2*i + 2].line, tokenlist[idx + 2*i + 2].offset);
 		}
     	}
+
 	idx += defcount * 2 + 1;
-	if(usecount = readInt(tokenlist[idx].token)){
+	if(usecount = readInt(tokenlist[idx].token, tokenlist[idx].line, tokenlist[idx].offset)){
 		for(int i=0; i < usecount; i++){
-	    	char* sym = readSym(tokenlist[idx + i].token);
+	    		char* sym = tokenlist[idx + i + 1].token;
 			uselist.push_back(sym);
+			//update used symbols
+			Symbol target_sym = findSymbol(sym);
+			for(int j=0; j < isused.size(); j++){
+				if(strcmp(isused[j].token, sym) == 0){
+					isused.erase(isused.begin() + j);	
+				}
+			}
 		}
     	}
+
     	idx += usecount + 1;
-	if(instcount = readInt(tokenlist[idx].token)){
+	if(instcount = readInt(tokenlist[idx].token, tokenlist[idx].line, tokenlist[idx].offset)){
 		for(int i=0; i < instcount; i++){
-	    		char* addressmode = readIEAR(tokenlist[idx + 2*i + 1].token);
-	    		int operand = readInt(tokenlist[idx + 2*i + 2].token);
+	    		char* addressmode = tokenlist[idx + 2*i + 1].token;
+	    		int operand = readInt(tokenlist[idx + 2*i + 2].token, tokenlist[idx + 2*i + 2].line, tokenlist[idx + 2*i + 2].offset);;
 	    		//various checks
-	    		if(addressmode == "R"){
+	    		if(strcmp(addressmode, "R") == 0){
 				operand += base;
 			}
-			else if(addressmode == "E"){
+			else if(strcmp(addressmode, "E") == 0){
 				int ref = operand % 1000;
-				char* target_sym = uselist[ref];
-				int target_addr = findSymbol(target_sym);
-				if(target_addr != -1) operand += target_addr;
+				int opcode = operand / 1000;	
+				Symbol target_sym = findSymbol(uselist[ref]);
+				//Rule 3 : symbol not defined
+				if(!target_sym.addr){
+					cout << "Error: " << uselist[ref] << " is not defined; zero used" << endl;
+				}
+				else operand = opcode * 1000 + target_sym.addr;
 			}
-			else if(addressmode == "I"){
+			else if(strcmp(addressmode, "I") == 0){
 				//an immediate operand is unchanged
 			}
-			else if(addressmode == "A"){
+			else if(strcmp(addressmode, "A") == 0){
 				//operand is the absolute address
 			}
 			cout << count << " " << operand << endl;
+			count++;
 		}
     	}
     	idx += instcount * 2 + 1;
     	base += instcount;
+	modulenum++;
+    }
+
+    //print warnings
+    //Rule4 : symbols defined but not used
+    for(int i = 0; i < isused.size(); i++){
+	cout << "Warning: Module " << isused[i].modulenum << ": " << isused[i].token << " was defined but never used\n";	
     }
 }
+
 
 int main(){
 
 	getToken();
-/**
-	for(int i = 0; i < tokenlist.size(); i++){
-		cout << i << " " << tokenlist[i].token << " /";
-	}	
-**/	
+	
 	pass1();
-	// for(int i = 0; i < symbtable.size(); i++){
- //        cout << symbtable[i].token << "=" << symbtable[i].addr << endl;
- //    }	
+
+	cout << "Symbol Table" << endl;
+	for(int i = 0; i < symbtable.size(); i++){
+        	cout << symbtable[i].token << "=" << symbtable[i].addr << endl;
+        }	
+
+	cout << endl;
+	cout << "Memory Map" << endl;
+	pass2();
 }
