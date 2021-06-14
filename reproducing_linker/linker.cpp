@@ -145,13 +145,16 @@ int findSymbol(char* target_sym){
 	return -1;
 }
 
-string convertTO3digit(int num){
-	string strnum = to_string(num);
-	string threedigit = "";
-	for(int i = 0; i < 3 - strnum.length(); i++) threedigit += "0";
-	threedigit += strnum;
-
-	return threedigit;
+char* convertTOdigit(int ndigit, int num){
+        char strnum[1024] = "";
+        sprintf(strnum, "%d", num);
+        int num_zeros = ndigit - (int)strlen(strnum);
+        char zeros[3]= "";
+        for(int i = 0; i < num_zeros; i++){
+                strcat(zeros, "0");
+        }
+        strcat(zeros, strnum);
+	return zeros;
 }
 
 //Parse error checking, create symbol table
@@ -243,7 +246,7 @@ int pass1(){
 	//Rule5 : address of def exceeds the size of module 
 	for(int i=0; i < moduledefs.size(); i++){
 		//cout << moduledefs[i].modulenum << " " << moduledefs[i].token << " " << moduledefs[i].addr << " " << instcount << endl;
-		if(moduledefs[i].addr >= instcount){
+		if(moduledefs[i].addr - base >= instcount){
 			cout << "Warning: Module " << moduledefs[i].modulenum << ": " << moduledefs[i].token << " too big " << moduledefs[i].addr << " (max=" << instcount-1 << ") assume zero relative\n";
 			
 			int symbidx = findSymbol(moduledefs[i].token);
@@ -341,7 +344,11 @@ void pass2(){
 					//Rule3 : symbol not defined
 					if(isdefined < 0){
 						absaddr = opcode * 1000;
-						strcpy(errormsg, strcat(uselist[operand], " is not defined; zero used")); 
+						char* symb = uselist[operand];
+						char tmp[1024] = "Error: ";
+						strcat(tmp, symb);
+						strcat(tmp, " is not defined; zero used");  
+						strcpy(errormsg, tmp); 
 					}
 					else{
 						Symbol target_sym = symbtable[isdefined];
@@ -382,7 +389,11 @@ void pass2(){
 					absaddr = instr;
 				}
 			}
-			cout << count << " : " << absaddr << " " << errormsg << endl;
+			char absaddr_digit[1024];
+			strcpy(absaddr_digit, convertTOdigit(4, absaddr));
+			char count_digit[1024];
+			strcpy(count_digit, convertTOdigit(3, count)); 
+			cout << count_digit << ": " << absaddr_digit << " " << errormsg << endl;
 			count++;
 		}
     	}
