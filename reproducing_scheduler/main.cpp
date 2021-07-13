@@ -365,12 +365,14 @@ public:
 		return randnum;
 	}
 
-	bool isInEventQueue(Process* p, int cur_time){
+	bool tobePreempted(Process* p, int cur_time){ //whether p is in EQ for the same time stamp
 		for(int i = 0; i < EventQueue.size(); i++){
-			if(p->PID == EventQueue[i]->process->PID && EventQueue[i]->timestamp <= cur_time) 
-				return true;
+			if(p->PID == EventQueue[i]->process->PID)
+				if(EventQueue[i]->timestamp > cur_time && EventQueue[i]->process->state == STATE_RUNNING) 
+					return true;
+				else return false;
 		}
-		return false;
+		return false; //not in the queue
 	}
 
 };
@@ -397,6 +399,13 @@ public:
 			if(evt->oldstate != STATE_CREATED) timeInPrevState = cur_time - proc->state_TS; 
 			else timeInPrevState = 0;
 
+			if(printevents){
+                                for(int i = 0; i < manage->EventQueue.size(); i++){
+                                        cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << manage->EventQueue[i]->process->DPRIO << " " << to_String(manage->EventQueue[i]->process->state) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " cb : " << manage->EventQueue[i]->process->remain_CB << " | ";
+                                }
+                                cout << endl;
+                        }
+
 			switch(evt->transition) { // which state to transition to?
  				case TRANS_TO_READY:{ 
  				// must come from BLOCKED or from PREEMPTION
@@ -405,15 +414,14 @@ public:
 					//If E sched, preempt currently running proccess
 					//if unblocking process’s dynamic priority > running process's dynamic priority AND the currently running process does not have an event pending for the same time stamp
 					if(manage->schedname == "PREPRIO"){
-						if(proc->DPRIO > runningproc->DPRIO && !(manage->isInEventQueue(runningproc, cur_time))){
+						if(proc->DPRIO > runningproc->DPRIO && (manage->tobePreempted(runningproc, cur_time))){
 							int remain_t = time - cur_time;
-							manage->rm_event(runningproc->PID);
-							runningproc->remain_TC += remain_t;
 							runningproc->remain_CB += remain_t;
+							runningproc->remain_TC += remain_t;				
+							manage->rm_event(runningproc->PID);
                                                         EVENT* newevt = new EVENT(runningproc, cur_time, TRANS_TO_PREEMPT, STATE_RUNNING, STATE_PREEMPT);
                                                         manage->put_event(newevt);
-							time = cur_time;
-							cout << "preempt " << runningproc->PID << " by " << proc->PID << endl;	
+							time = cur_time;	
 						}
 					}
 
@@ -436,7 +444,7 @@ public:
 					}
 					
 					Process* runproc = manage->sched->get_next_process();
-	
+					
 					timeInPrevState = cur_time - runproc->state_TS;	
 					//update cpu wait time
 					runproc->CW += timeInPrevState; 
@@ -536,7 +544,8 @@ public:
 							
 						}
 					}
-					runningproc = proc;
+					runproc->state = STATE_RUNNING;
+                                        runningproc = runproc;
 					break;
 				}
  				case TRANS_TO_BLOCK:{
@@ -596,7 +605,7 @@ public:
 
 			if(printevents){
 				for(int i = 0; i < manage->EventQueue.size(); i++){
-					cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << to_String(manage->EventQueue[i]->newstate) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " ";
+					cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << manage->EventQueue[i]->process->DPRIO << " " << to_String(manage->EventQueue[i]->process->state) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " cb : " << manage->EventQueue[i]->process->remain_CB << " | ";
 				}
 				cout << endl;
 			}
@@ -715,6 +724,7 @@ int main(int argc, char* argv[]) {
 		//create processes
 		int static_prio = instance->myrandom(maxprio);
 		Process* p = new Process(pid, process_info[0], process_info[1], process_info[2], process_info[3], static_prio);	
+		p->state = STATE_CREATED;
 		processes.push_back(p);
 		pid++;
 
