@@ -19,11 +19,11 @@ string to_String(int k){
 		case STATE_READY:
 			return "READY";
 		case STATE_RUNNING:
-			return "RUNNING";
+			return "RUNNG";
 		case STATE_BLOCKED:
 			return "BLOCK";
 		case STATE_PREEMPT:
-			return "READY";
+			return "PREEMPT";
 		case STATE_DONE:
 			return "Done";	
 
@@ -118,14 +118,14 @@ class LCFS: public Scheduler{
 public:
 
 	void add_process(Process* p){
-		ReadyQueue.insert(ReadyQueue.begin(), p);
+		ReadyQueue.push_back(p);
 	}
 
 	Process* get_next_process(){
 		Process* next = nullptr;
                 if(!ReadyQueue.empty()){
-			next = ReadyQueue.front();
-                        ReadyQueue.erase(ReadyQueue.begin());	
+			next = ReadyQueue[ReadyQueue.size() - 1];
+                        ReadyQueue.pop_back();	
 		}
 		return next;	
 	}
@@ -180,30 +180,17 @@ public:
 	vector<Process*> activeProcess;
 	vector<Process*> expiredProcess;
 
-	PRIO(int n, int mp){
+	PRIO(int n){
 		quantum = n;
 	}
 
 	void add_process(Process* p){
 		if(p->DPRIO == -1){ //when dynamic priority reaches -1, add to the expired
 			p->DPRIO = p->PRIO - 1;
-			int sz = expiredProcess.size();
-			//sort in descending order
-			for(int i = 0; i < expiredProcess.size(); i++){
-				if(expiredProcess[i]->DPRIO < p->DPRIO)	
-					expiredProcess.insert(expiredProcess.begin() + i, p);
-			}
-
-			if(sz == expiredProcess.size()) expiredProcess.push_back(p);
+			expiredProcess.push_back(p);
 		}
 		else{//add to active
-			int sz = activeProcess.size();
-			for(int i = 0; i < activeProcess.size(); i++){
-                                if(activeProcess[i]->DPRIO < p->DPRIO)
-                                        activeProcess.insert(activeProcess.begin() + i, p);
-                        }
-
-                        if(sz == activeProcess.size()) activeProcess.push_back(p);
+                        activeProcess.push_back(p);
 		}
 	}
 
@@ -214,10 +201,18 @@ public:
 			activeProcess = expiredProcess;
 			expiredProcess = temp;
 		}
-			
+
 		Process* next = activeProcess.front();
-                activeProcess.erase(activeProcess.begin());
-    
+		int max_DPRIO = activeProcess.front()->DPRIO;
+                int max_idx = 0;
+		for(int i = 0; i < activeProcess.size(); i++){
+			if(activeProcess[i]->DPRIO > max_DPRIO){
+				max_DPRIO = activeProcess[i]->DPRIO; 	
+				next = activeProcess[i];
+				max_idx = i;
+			}
+		}	
+    		activeProcess.erase(activeProcess.begin() + max_idx);
                 return next;
 		
 	}
@@ -226,37 +221,24 @@ public:
 
 class PREPRIO: public Scheduler{
 public:
-
 	vector<Process*> activeProcess;
         vector<Process*> expiredProcess;
-	PREPRIO(int n, int mp){
-		quantum = n;
-	}
 
-	void add_process(Process* p){
+        PREPRIO(int n){
+                quantum = n;
+        }
+
+        void add_process(Process* p){
                 if(p->DPRIO == -1){ //when dynamic priority reaches -1, add to the expired
                         p->DPRIO = p->PRIO - 1;
-                        int sz = expiredProcess.size();
-                        //sort in descending order
-                        for(int i = 0; i < expiredProcess.size(); i++){
-                                if(expiredProcess[i]->DPRIO < p->DPRIO)
-                                        expiredProcess.insert(expiredProcess.begin() + i, p);
-                        }
-
-                        if(sz == expiredProcess.size()) expiredProcess.push_back(p);
+                        expiredProcess.push_back(p);
                 }
                 else{//add to active
-                        int sz = activeProcess.size();
-                        for(int i = 0; i < activeProcess.size(); i++){
-                                if(activeProcess[i]->DPRIO < p->DPRIO)
-                                        activeProcess.insert(activeProcess.begin() + i, p);
-                        }
-
-                        if(sz == activeProcess.size()) activeProcess.push_back(p);
+                        activeProcess.push_back(p);
                 }
         }
 
-	Process* get_next_process(){
+        Process* get_next_process(){
                 if(activeProcess.empty()){//if active process queue is empty, swap with expired process queue
                         vector<Process*> temp;
                         temp = activeProcess;
@@ -265,11 +247,18 @@ public:
                 }
 
                 Process* next = activeProcess.front();
-                activeProcess.erase(activeProcess.begin());
-
+                int max_DPRIO = activeProcess.front()->DPRIO;
+                int max_idx = 0;
+                for(int i = 0; i < activeProcess.size(); i++){
+                        if(activeProcess[i]->DPRIO > max_DPRIO){
+                                max_DPRIO = activeProcess[i]->DPRIO;
+                                next = activeProcess[i];
+                                max_idx = i;
+                        }
+                }
+                activeProcess.erase(activeProcess.begin() + max_idx);
                 return next;
-
-        }
+	}
 };
 
 
@@ -325,11 +314,11 @@ public:
 				schedname = "RR";
 				break;
 			case 'P':
-				sched = new PRIO(num, maxprio);
+				sched = new PRIO(num);
 				schedname = "PRIO";
 				break;
 			case 'E':
-				sched = new PREPRIO(num, maxprio);
+				sched = new PREPRIO(num);
 				schedname = "PREPRIO";
 				break;
 		}
@@ -361,7 +350,13 @@ public:
 		if(sz == EventQueue.size()) EventQueue.push_back(e);
 	}
 	
-	void rm_event();
+	void rm_event(int pid){
+		for(int i = 0; i < EventQueue.size(); i++){
+			if(pid == EventQueue[i]->process->PID){
+				EventQueue.erase(EventQueue.begin() + i);	
+			} 
+		}
+	}
 	
 	int myrandom(int burst){
 		int randnum = 1 + (randvals[ofs] % burst);
@@ -370,29 +365,35 @@ public:
 		return randnum;
 	}
 
+	bool isInEventQueue(Process* p, int cur_time){
+		for(int i = 0; i < EventQueue.size(); i++){
+			if(p->PID == EventQueue[i]->process->PID && EventQueue[i]->timestamp <= cur_time) 
+				return true;
+		}
+		return false;
+	}
+
 };
 
 class Simulation{
-
 public:
 	Management* manage;
+	vector<pair<int, int>> IOrequest;
 	int sim_FT;
 
 	Simulation(Management* instance){
 		manage = instance;
 	}
 
-	void Run(int verbose){
+	void Run(int verbose, int printevents){
 		EVENT* evt;
-		Process* prevproc;//previously running process
+		Process* runningproc;//previously running process
 		int time = manage->EventQueue[0]->timestamp; //global time	
  		while((evt = manage->get_event())){
  			Process *proc = evt->process; // this is the process the event works on
  			int cur_time = evt->timestamp;
-			
 			int timeInPrevState;			
 			bool CALL_SCHEDULER = false;
-			
 			if(evt->oldstate != STATE_CREATED) timeInPrevState = cur_time - proc->state_TS; 
 			else timeInPrevState = 0;
 
@@ -401,44 +402,42 @@ public:
  				// must come from BLOCKED or from PREEMPTION
  				// must add_process to run queue
  					CALL_SCHEDULER = true; // conditional on whether something is run
+					//If E sched, preempt currently running proccess
+					//if unblocking process’s dynamic priority > running process's dynamic priority AND the currently running process does not have an event pending for the same time stamp
+					if(manage->schedname == "PREPRIO"){
+						if(proc->DPRIO > runningproc->DPRIO && !(manage->isInEventQueue(runningproc, cur_time))){
+							int remain_t = time - cur_time;
+							manage->rm_event(runningproc->PID);
+							runningproc->remain_TC += remain_t;
+							runningproc->remain_CB += remain_t;
+                                                        EVENT* newevt = new EVENT(runningproc, cur_time, TRANS_TO_PREEMPT, STATE_RUNNING, STATE_PREEMPT);
+                                                        manage->put_event(newevt);
+							time = cur_time;
+							cout << "preempt " << runningproc->PID << " by " << proc->PID << endl;	
+						}
+					}
 
 					if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << endl;
 
 					EVENT* newevt = new EVENT(proc, cur_time, TRANS_TO_RUN, evt->newstate, STATE_RUNNING);
 					manage->put_event(newevt);
 					manage->sched->add_process(proc);
-					if(manage->schedname == "PRIO" && proc->DPRIO == -1) proc->DPRIO = proc->PRIO - 1; 
+					proc->state = STATE_READY;
 					proc->state_TS = cur_time;
-					
 					break;
 				}
  				case TRANS_TO_RUN:{
  				// create event for either preemption or blocking
  				// global time should be updated
  					if(cur_time < time){ //process is running
-						if(manage->schedname == "PREPRIO"){
-							//preempt curent process
-							if(prevproc){
-								if(proc->DPRIO > prevproc->DPRIO){
-									int remain_t = time - cur_time;
-									EVENT* newevt = new EVENT(prevproc, cur_time + remain_t, TRANS_TO_PREEMPT, STATE_RUNNING, STATE_PREEMPT);
-                                                                	manage->put_event(newevt);
-                                                                	prevproc->remain_TC -= remain_t;
-                                                                	prevproc->remain_CB -= remain_t;
-                                                                	prevproc->state_TS = cur_time;
-									
-									if(verbose) cout << cur_time << " " << prevproc->PID << " " << timeInPrevState << ": " << "Running" << " -> " << "BLOCK" << " cb : " << proc->remain_CB << " rem : " << proc->remain_TC << " prio : " << proc->DPRIO << endl;	
-								}	
-							}
-						}
-						else{
-							evt->timestamp = time;
-							manage->put_event(evt);		
-							continue;
-						}
+						evt->timestamp = time;
+						manage->put_event(evt);		
+						continue;
 					}
-			
-					Process* runproc = manage->sched->get_next_process();	
+					
+					Process* runproc = manage->sched->get_next_process();
+	
+					timeInPrevState = cur_time - runproc->state_TS;	
 					//update cpu wait time
 					runproc->CW += timeInPrevState; 
 					
@@ -447,7 +446,7 @@ public:
 						//randomly pick CB (1 ~ CB)
 						runproc->remain_CB = manage->myrandom(runproc->CB);
 
-						if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << " cb : " << proc->remain_CB << " rem : " << proc->remain_TC << " prio : " << proc->DPRIO << endl;
+						if(verbose) cout << cur_time << " " << runproc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << "lr= " << runproc->state_TS << " cb=" << runproc->remain_CB << " rem=" << runproc->remain_TC << " prio=" << runproc->DPRIO << endl;
 
 						if(runproc->remain_TC <= runproc->remain_CB){
 							//create event to finish
@@ -469,23 +468,34 @@ public:
 						}
 					}//Preemptive schedulers
 					else if(manage->schedname == "RR" || manage->schedname == "PRIO" || manage->schedname == "PREPRIO"){
-						//don't update cb if from preemption
-						if(evt->oldstate != STATE_PREEMPT || runproc->remain_CB == 0) runproc->remain_CB = manage->myrandom(runproc->CB);
+						if(runproc->state != STATE_PREEMPT || runproc->remain_CB == 0){
+							runproc->remain_CB = manage->myrandom(runproc->CB);
+						}
 
-						if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << " cb : " << proc->remain_CB << " rem : " << proc->remain_TC << " prio : " << proc->DPRIO << endl;
+						if(verbose) cout << cur_time << " " << runproc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << " cb=" << runproc->remain_CB << " rem=" << runproc->remain_TC << " prio=" << runproc->DPRIO << endl;
 
+						
 						if(runproc->remain_CB == manage->sched->quantum){
 							EVENT* newevt;
-							if(runproc->remain_TC == runproc->remain_CB)
-								newevt = new EVENT(runproc, cur_time + manage->sched->quantum, TRANS_TO_FIN, evt->newstate, STATE_DONE);	
-							else newevt = new EVENT(runproc, cur_time + manage->sched->quantum, TRANS_TO_BLOCK, evt->newstate, STATE_BLOCKED);
-                                                       	manage->put_event(newevt);
-                                                        time = cur_time + manage->sched->quantum;
-                                                        runproc->remain_TC -= manage->sched->quantum;
-                                                        runproc->remain_CB -= manage->sched->quantum;
-                                                        runproc->state_TS = cur_time;
-							
-						}	
+							if(runproc->remain_TC <= runproc->remain_CB){
+								newevt = new EVENT(runproc, cur_time + runproc->remain_TC, TRANS_TO_FIN, evt->newstate, STATE_DONE);	
+								manage->put_event(newevt);
+								time = cur_time + runproc->remain_TC;
+								runproc->remain_TC -= runproc->remain_TC;
+								runproc->remain_CB -= runproc->remain_TC;
+								runproc->state_TS = cur_time; 
+
+							}
+							else{
+								newevt = new EVENT(runproc, cur_time + manage->sched->quantum, TRANS_TO_BLOCK, evt->newstate, STATE_BLOCKED);
+                                        	               	manage->put_event(newevt);
+                                        	                time = cur_time + manage->sched->quantum;
+                                        	                runproc->remain_TC -= manage->sched->quantum;
+                                        	                runproc->remain_CB -= manage->sched->quantum;
+                                        	                runproc->state_TS = cur_time;
+							}	
+						}
+	
 						else if(runproc->remain_CB > manage->sched->quantum){
 							if(runproc->remain_TC > manage->sched->quantum){ //preempt current process
 								EVENT* newevt = new EVENT(runproc, cur_time + manage->sched->quantum, TRANS_TO_PREEMPT, evt->newstate, STATE_PREEMPT);
@@ -526,7 +536,7 @@ public:
 							
 						}
 					}
-					prevproc = proc;
+					runningproc = proc;
 					break;
 				}
  				case TRANS_TO_BLOCK:{
@@ -535,12 +545,16 @@ public:
 
 					int IOtime = manage->myrandom(proc->IO);
 
-					if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << " ib : " << IOtime << " rem : " << proc->remain_TC << " prio : " << proc->DPRIO <<  endl; 
+					if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << " ib=" << IOtime << " rem=" << proc->remain_TC << " prio=" << proc->DPRIO <<  endl; 
 
+					 //When a process returns from I/O its dynamic priority is reset to (static_priority-1)
+					if(manage->schedname == "PRIO" || manage->schedname == "PREPRIO") proc->DPRIO = proc->PRIO - 1;
+					
 					proc->IT += IOtime;
-					EVENT* newevt = new EVENT(proc, cur_time + IOtime, TRANS_TO_READY, evt->newstate, STATE_READY);
+					IOrequest.push_back({cur_time, cur_time + IOtime});
+					EVENT* newevt = new EVENT(proc, cur_time + IOtime, TRANS_TO_READY, STATE_BLOCKED, STATE_READY);
 					manage->put_event(newevt);
-					if(manage->schedname == "PRIO") proc->DPRIO = proc->PRIO - 1;	
+					proc->state = STATE_BLOCKED;
 					proc->state_TS = cur_time;
 					
 
@@ -549,37 +563,44 @@ public:
  				case TRANS_TO_PREEMPT:{
 				 // add to runqueue (no event is generated)
 				 	CALL_SCHEDULER = true;
-				 	if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << endl;
+				 	if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << to_String(evt->oldstate) << " -> " << to_String(evt->newstate) << " cb=" << proc->remain_CB << " rem=" << proc->remain_TC << " prio=" << proc->DPRIO << endl;
 
-                                        EVENT* newevt = new EVENT(proc, cur_time, TRANS_TO_RUN, evt->newstate, STATE_RUNNING);
+               				if(manage->schedname == "PRIO" || manage->schedname == "PREPRIO"){
+                                                proc->DPRIO -= 1;
+                                        }
+
+
+	                                EVENT* newevt = new EVENT(proc, cur_time, TRANS_TO_RUN, STATE_PREEMPT, STATE_RUNNING);
                                         manage->put_event(newevt);
                                         manage->sched->add_process(proc);
-					if(manage->schedname == "PRIO"){
-						proc->DPRIO -= 1;
-						if(proc->DPRIO == -1) proc->DPRIO = proc->PRIO - 1;
-					}
-
+					proc->state = STATE_PREEMPT;
                                         proc->state_TS = cur_time;
 	
 						
 					break;
 				}
 				case TRANS_TO_FIN:{
+					proc->state = STATE_DONE;
 					proc->FT = cur_time;
 					proc->TT = proc->FT - proc->AT;	
 					sim_FT = cur_time;
-					
+	
 					if(verbose) cout << cur_time << " " << proc->PID << " " << timeInPrevState << ": " << "Done" << endl;	
 					
 					break;
 				}
 	 		}
-
  			// remove current event object from Memory
  			delete evt; 
 			evt = nullptr;
-			//for(int i = 0; i < manage->EventQueue.size(); i++)
-				//cout << manage->EventQueue[i]->process->PID << "    " <<  to_String(manage->EventQueue[i]->transition)<< endl;
+
+			if(printevents){
+				for(int i = 0; i < manage->EventQueue.size(); i++){
+					cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << to_String(manage->EventQueue[i]->newstate) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " ";
+				}
+				cout << endl;
+			}
+
 /**
  			if(CALL_SCHEDULER) {
  				if (get_next_event_time() == CURRENT_TIME)
@@ -707,7 +728,7 @@ int main(int argc, char* argv[]) {
 
 	//run simluation
 	Simulation* sim = new Simulation(instance);
-	sim->Run(vflag);
+	sim->Run(vflag, eflag);
 
 	//calculate and print result
 	if(instance->schedname ==  "FCFS" || instance->schedname == "LCFS" || instance->schedname == "SRTF") cout << instance->schedname << endl;
@@ -730,8 +751,21 @@ int main(int argc, char* argv[]) {
 		avg_TT += (double)processes[i]->TT;
 		avg_CW += (double)processes[i]->CW;
 		cpu_util += (double)processes[i]->TC;
-		io_util += (double)processes[i]->IT;
-	}	
+	}
+
+	int last_ft = 0; //last finish time
+	sort(sim->IOrequest.begin(), sim->IOrequest.end());
+	for(int i = 0; i < sim->IOrequest.size(); i++){
+		if(last_ft <= sim->IOrequest[i].first || i == 0){
+			io_util += (double)(sim->IOrequest[i].second - sim->IOrequest[i].first);
+			last_ft = sim->IOrequest[i].second;
+		}
+		else if(last_ft <= sim->IOrequest[i].second){
+			io_util += (double)(sim->IOrequest[i].second - last_ft);
+			last_ft = sim->IOrequest[i].second;
+		}
+	}
+	
 	avg_TT /= (double)processes.size();
 	avg_CW /= (double)processes.size();
 	cpu_util /= (double)sim_FT;
