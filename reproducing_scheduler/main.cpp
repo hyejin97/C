@@ -76,6 +76,8 @@ class Scheduler{
 
 public:
 	vector<Process*> ReadyQueue;
+	vector<Process*> activeProcess;
+        vector<Process*> expiredProcess;
 	int quantum;
 
 	virtual void add_process(Process* p){
@@ -84,6 +86,20 @@ public:
 	virtual Process* get_next_process(){
 		Process* next = nullptr;
 		return next;
+	}
+	void swapQ(){
+		vector<Process*> temp;
+                temp = activeProcess;
+                activeProcess = expiredProcess;
+                expiredProcess = temp;
+
+	}
+	virtual Process* get_running_process(){
+		Process* target = nullptr;
+		for(int i = 0; i < ReadyQueue.size(); i++){
+			if(ReadyQueue[i]->state == STATE_RUNNING) target = ReadyQueue[i]; 
+		}
+		return target;
 	}
 	Scheduler(){}
 	~Scheduler(){
@@ -177,8 +193,6 @@ public:
 
 class PRIO: public Scheduler{
 public:
-	vector<Process*> activeProcess;
-	vector<Process*> expiredProcess;
 
 	PRIO(int n){
 		quantum = n;
@@ -196,10 +210,7 @@ public:
 
 	Process* get_next_process(){
 		if(activeProcess.empty()){//if active process queue is empty, swap with expired process queue
-			vector<Process*> temp;
-			temp = activeProcess;
-			activeProcess = expiredProcess;
-			expiredProcess = temp;
+			swapQ();
 		}
 
 		Process* next = activeProcess.front();
@@ -221,8 +232,6 @@ public:
 
 class PREPRIO: public Scheduler{
 public:
-	vector<Process*> activeProcess;
-        vector<Process*> expiredProcess;
 
         PREPRIO(int n){
                 quantum = n;
@@ -239,26 +248,32 @@ public:
         }
 
         Process* get_next_process(){
-                if(activeProcess.empty()){//if active process queue is empty, swap with expired process queue
-                        vector<Process*> temp;
-                        temp = activeProcess;
-                        activeProcess = expiredProcess;
-                        expiredProcess = temp;
-                }
 
-                Process* next = activeProcess.front();
-                int max_DPRIO = activeProcess.front()->DPRIO;
-                int max_idx = 0;
+		if(activeProcess.empty()) swapQ();
+
+		Process* next = activeProcess.front();
+	        int max_DPRIO = activeProcess.front()->DPRIO;
+        	int max_idx = 0;
                 for(int i = 0; i < activeProcess.size(); i++){
                         if(activeProcess[i]->DPRIO > max_DPRIO){
-                                max_DPRIO = activeProcess[i]->DPRIO;
-                                next = activeProcess[i];
-                                max_idx = i;
-                        }
+                       	        max_DPRIO = activeProcess[i]->DPRIO;
+                       	        next = activeProcess[i];
+                       	        max_idx = i;
+                       	}
                 }
                 activeProcess.erase(activeProcess.begin() + max_idx);
+
                 return next;
 	}
+	Process* get_running_process(){
+                Process* target = nullptr;
+                for(int i = 0; i < activeProcess.size(); i++){
+                        if(activeProcess[i]->state == STATE_RUNNING) target = activeProcess[i];
+                }
+                return target;
+        }
+
+	
 };
 
 
@@ -386,8 +401,37 @@ public:
 	Simulation(Management* instance){
 		manage = instance;
 	}
+	
+	void printEventQ(){
+		for(int i = 0; i < manage->EventQueue.size(); i++)
+                	cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << manage->EventQueue[i]->process->DPRIO << " " << to_String(manage->EventQueue[i]->process->state) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " cb : " << manage->EventQueue[i]->process->remain_CB << " | ";
+                cout << endl;
 
-	void Run(int verbose, int printevents){
+	}
+
+	void printReadyQ(){
+		
+		if(manage->schedname == "RR" || manage->schedname == "PRIO" || manage->schedname == "PREPRIO") {
+			cout << "Sched(" << manage->sched->activeProcess.size() << ") ";
+                        for(int i = 0; i < manage->sched->activeProcess.size(); i++){
+                                cout <<  "[ " << manage->sched->activeProcess[i]->PID << "] ";
+                        }
+			cout << "(" << manage->sched->expiredProcess.size() << ") ";
+                        for(int i = 0; i < manage->sched->expiredProcess.size(); i++){
+                                cout <<  "[ " << manage->sched->expiredProcess[i]->PID << "] ";
+                        }
+                        cout << endl;
+ 		}
+		else{
+			cout << "Sched(" << manage->sched->ReadyQueue.size() << ") ";
+			for(int i = 0; i < manage->sched->ReadyQueue.size(); i++){
+				cout <<  "[ " << manage->sched->ReadyQueue[i]->PID << "] "; 
+			}	
+			cout << endl;
+		}
+	}
+
+	void Run(int verbose, int printevents, int printprocs){
 		EVENT* evt;
 		Process* runningproc;//previously running process
 		int time = manage->EventQueue[0]->timestamp; //global time	
@@ -396,15 +440,10 @@ public:
  			int cur_time = evt->timestamp;
 			int timeInPrevState;			
 			bool CALL_SCHEDULER = false;
+			
 			if(evt->oldstate != STATE_CREATED) timeInPrevState = cur_time - proc->state_TS; 
 			else timeInPrevState = 0;
 
-			if(printevents){
-                                for(int i = 0; i < manage->EventQueue.size(); i++){
-                                        cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << manage->EventQueue[i]->process->DPRIO << " " << to_String(manage->EventQueue[i]->process->state) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " cb : " << manage->EventQueue[i]->process->remain_CB << " | ";
-                                }
-                                cout << endl;
-                        }
 
 			switch(evt->transition) { // which state to transition to?
  				case TRANS_TO_READY:{ 
@@ -413,7 +452,7 @@ public:
  					CALL_SCHEDULER = true; // conditional on whether something is run
 					//If E sched, preempt currently running proccess
 					//if unblocking process’s dynamic priority > running process's dynamic priority AND the currently running process does not have an event pending for the same time stamp
-					if(manage->schedname == "PREPRIO"){
+					if(manage->schedname == "PREPRIO" && runningproc != nullptr){
 						if(proc->DPRIO > runningproc->DPRIO && (manage->tobePreempted(runningproc, cur_time))){
 							int remain_t = time - cur_time;
 							runningproc->remain_CB += remain_t;
@@ -421,7 +460,8 @@ public:
 							manage->rm_event(runningproc->PID);
                                                         EVENT* newevt = new EVENT(runningproc, cur_time, TRANS_TO_PREEMPT, STATE_RUNNING, STATE_PREEMPT);
                                                         manage->put_event(newevt);
-							time = cur_time;	
+							time = cur_time;
+							
 						}
 					}
 
@@ -440,6 +480,7 @@ public:
  					if(cur_time < time){ //process is running
 						evt->timestamp = time;
 						manage->put_event(evt);		
+						if(printevents) printEventQ();
 						continue;
 					}
 					
@@ -550,6 +591,7 @@ public:
 				}
  				case TRANS_TO_BLOCK:{
  				//create an event for when process becomes READY again
+
  					CALL_SCHEDULER = true;
 
 					int IOtime = manage->myrandom(proc->IO);
@@ -603,26 +645,24 @@ public:
  			delete evt; 
 			evt = nullptr;
 
-			if(printevents){
-				for(int i = 0; i < manage->EventQueue.size(); i++){
-					cout << manage->EventQueue[i]->timestamp << ":"  << manage->EventQueue[i]->process->PID << ":" << manage->EventQueue[i]->process->DPRIO << " " << to_String(manage->EventQueue[i]->process->state) << " rem:" <<  manage->EventQueue[i]->process->remain_TC << " cb : " << manage->EventQueue[i]->process->remain_CB << " | ";
-				}
-				cout << endl;
-			}
-
 /**
- 			if(CALL_SCHEDULER) {
- 				if (get_next_event_time() == CURRENT_TIME)
- 					continue; //process next event from Event queue
- 				CALL_SCHEDULER = false; // reset global flag
-				if (CURRENT_RUNNING_PROCESS == nullptr) {
- 					CURRENT_RUNNING_PROCESS = THE_SCHEDULER->get_next_process();
- 					if (CURRENT_RUNNING_PROCESS == nullptr) 
- 						continue;
- 				// create event to make this process runnable for same time.
-				} 
-			} 
+			if(CALL_SCHEDULER){
+				if(manage->sched->activeProcess.empty()) manage->sched->swapQ(); 
+				if(manage->EventQueue[0]->timestamp == time) continue;
+				CALL_SCHEDULER = false;
+
+				if(runningproc == nullptr){
+					runningproc = manage->sched->get_next_process();
+					if(runningproc == nullptr) continue;
+
+					// create event to make this process runnable for same time.	
+				}
+					
+			}
 **/
+			if(printevents) printEventQ();
+                        if(printprocs) printReadyQ();
+
 		} 
 	}
 };
@@ -738,7 +778,7 @@ int main(int argc, char* argv[]) {
 
 	//run simluation
 	Simulation* sim = new Simulation(instance);
-	sim->Run(vflag, eflag);
+	sim->Run(vflag, eflag, tflag);
 
 	//calculate and print result
 	if(instance->schedname ==  "FCFS" || instance->schedname == "LCFS" || instance->schedname == "SRTF") cout << instance->schedname << endl;
