@@ -29,6 +29,7 @@ struct PTE{
 	unsigned int isinvma:1;
 	unsigned int vmachecked:1;
 	unsigned int filemapped:1;
+	unsigned int nruclass:1;
 }pte;
 
 struct P_STATS{
@@ -142,22 +143,88 @@ public:
 	}
 };
 
-/**
 class Clock: public Pager{
 public:
+	int hand;
+	Clock(){
+		hand = 0;
+	}
 	FRAME* select_victim_frame(){
-
+		FRAME* fm = nullptr;
+		bool found = false;
+		while(!found){
+			fm = frametable[hand];
+			if(fm->p->pagetable[fm->vpage].referenced == 0){ //evict
+				hand++;
+				if(hand == num_frames) hand = 0;
+				found = true;
+			}
+			else{
+				fm->p->pagetable[fm->vpage].referenced = 0;
+				hand++;	
+				if(hand == num_frames) hand = 0;	
+			}
+		}
+		return fm;
 	}
 };
 
 class NRU: public Pager{
 public:
+	int hand;
+	int clock;
+
+	NRU(){
+		hand = 0;
+		clock = 0;
+	}
 
 	FRAME* select_victim_frame(){
 
+		FRAME* fm = nullptr;
+		PTE* pte = nullptr;
+		unsigned int min_class_num = INT_MAX;
+
+		
+		for(int i = 0; i < num_frames; i++){
+			pte = &frametable[i]->p->pagetable[frametable[i]->vpage];
+			if(pte->referenced == 0 && pte->modified == 0){
+				pte->nruclass = 0;
+			}
+			else if(pte->referenced == 0 && pte->modified == 1){
+				pte->nruclass = 1;
+			}
+			else if(pte->referenced == 1 && pte->modified == 0){
+				pte->nruclass = 2;
+			}
+			else{
+				pte->nruclass = 3;
+			}
+			if(min_class_num > pte->nruclass) min_class_num = pte->nruclass;
+		}
+		bool found = false;
+		while(!found){
+			fm = frametable[hand];
+			unsigned int nruclass = fm->p->pagetable[fm->vpage].nruclass;
+			if(nruclass == min_class_num){
+				found = true;	
+			}
+			hand++;
+			if(hand == num_frames) hand = 0;
+		}
+
+		clock++;
+		if(clock >= 50){
+			//reset refbit
+			for(int i = 0; i < num_frames; i++){
+				frametable[i]->p->pagetable[frametable[i]->vpage].referenced = 0;
+			}
+			clock = 0;
+		}		
+		return fm;
 	}
 };
-
+/**
 class Aging: public Pager{
 public:
 
@@ -281,6 +348,9 @@ void simulate(Proc* cur){
 			cost += 130;
 		}
 		else if(operation == 'e'){
+			//TODO On process exit (instruction), you have to traverse the active process’s page table starting from 0..63 
+			//and for each valid entry UNMAP the page and FOUT modified filemapped pages. 
+			//Note that dirty non-fmapped (anonymous) pages are not written back (OUT) as the process exits. The used frame has to be returned to the free pool 
 			proc_exits++;
 			cost += 1250;
 			return;		
@@ -407,13 +477,13 @@ int main(int argc, char *argv[]){
 						pager = new FIFO();
 						break;
 					case 'r':
-						//pager = new Random();
+						pager = new Random();
 						break;
 					case 'c':
-						//pager = new Clock();
+						pager = new Clock();
 						break;
 					case 'e':
-						//pager = new NRU();
+						pager = new NRU();
 						break;
 					case 'a':
 						//pager = new Aging();
@@ -483,6 +553,7 @@ int main(int argc, char *argv[]){
 	char* buff = NULL;
 	size_t len = 0;
 
+	getline(&buff, &len, fp_rfile);
 	while(getline(&buff, &len, fp_rfile) != -1){
 		randvals.push_back(atoi(buff));
 	}	
