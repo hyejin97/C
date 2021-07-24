@@ -29,7 +29,7 @@ struct PTE{
 	unsigned int isinvma:1;
 	unsigned int vmachecked:1;
 	unsigned int filemapped:1;
-	unsigned int nruclass:1;
+	unsigned int nruclass:2; //0,1,2,3
 }pte;
 
 struct P_STATS{
@@ -81,6 +81,8 @@ public:
 
 struct FRAME{
 	unsigned int frameidx;
+	unsigned int age;
+	unsigned int lastused;
         Proc* p;
         int vpage;
 }frame;
@@ -121,9 +123,11 @@ Pager* pager;
 class FIFO: public Pager{
 public:
 	int hand;
+
 	FIFO(){
 		hand = 0;
 	}
+
 	FRAME* select_victim_frame(){
 		FRAME* fm = frametable[hand];
 		hand++;
@@ -146,9 +150,11 @@ public:
 class Clock: public Pager{
 public:
 	int hand;
+
 	Clock(){
 		hand = 0;
 	}
+
 	FRAME* select_victim_frame(){
 		FRAME* fm = nullptr;
 		bool found = false;
@@ -183,7 +189,7 @@ public:
 
 		FRAME* fm = nullptr;
 		PTE* pte = nullptr;
-		unsigned int min_class_num = INT_MAX;
+		unsigned int min_class_num = UINT_MAX;
 
 		
 		for(int i = 0; i < num_frames; i++){
@@ -224,24 +230,95 @@ public:
 		return fm;
 	}
 };
-/**
+
 class Aging: public Pager{
 public:
+	int hand;
+
+	Aging(){
+		hand = 0;
+	}
 
 	FRAME* select_victim_frame(){
+		FRAME* fm = nullptr;
+		unsigned int minage = UINT_MAX;
+		for(int i = 0; i < num_frames; i++){
+			frametable[i]->age = frametable[i]->age >> 1; 
 
+			// add R bit as the leftmost bit
+			unsigned int r = frametable[i]->p->pagetable[frametable[i]->vpage].referenced;
+			if(r == 1){  // shift counter right by 1
+				frametable[i]->age = frametable[i]->age | 0x80000000;	
+			}
+
+			if(frametable[i]->age <= minage){
+				minage = frametable[i]->age;
+			}
+			//reset R bit
+			frametable[i]->p->pagetable[frametable[i]->vpage].referenced = 0;	
+		}
+				
+		bool found = false;
+		while(!found){
+			if(frametable[hand]->age == minage){
+				fm = frametable[hand];
+				found = true;
+			}		
+			hand++;
+			if(hand == num_frames) hand = 0;
+		}
+		return fm;
 	}
 };
 
 class Workingset: public Pager{
 public:
+	int clock;
+	int hand;
+
+	Workingset(){
+		clock = 0;
+		hand = 0;
+	}
 
 	FRAME* select_victim_frame(){
-	
+		FRAME* fm = nullptr;
+		unsigned int oldest = UINT_MAX;
+		int oldest_idx = -1;
+		int idx = hand;
+		bool found = false;	
+		while(!found){
+			if(hand == idx && oldest_idx != -1){
+                                fm = frametable[oldest_idx];
+                                found = true;
+                        }
+
+			unsigned int r = frametable[hand]->p->pagetable[frametable[hand]->vpage].referenced;
+			if(r == 0){
+				if(clock - frametable[hand]->lastused >= 50){
+					fm = frametable[hand];
+					found = true;
+				}
+				else{
+					if(oldest > frametable[hand]->lastused){
+						oldest_idx = hand;
+						oldest = frametable[hand]->lastused; 
+					}
+				}
+				
+			}
+			else{ //r == 1, record curtime and reset R
+				frametable[hand]->lastused = clock;
+				frametable[hand]->p->pagetable[frametable[hand]->vpage].referenced = 0;			
+			}
+			hand++;
+			if(hand == num_frames) hand = 0;
+
+		}
+
+		return fm;
 	}
 };
-
-**/
 
 
 //describes the usage of each of its physical frames
@@ -307,6 +384,8 @@ void do_map(Proc* cur, PTE* pte, int vpage, FRAME* newframe){
         pte->frame = newframe->frameidx;
 	pte->valid = 1;
 	cur->stats.maps += 1;
+	newframe->age = 0;
+	newframe->lastused = inst_num;
 }
 
 
@@ -360,7 +439,7 @@ void simulate(Proc* cur){
                 	if(!pte->valid){
                  	// this in reality generates the page fault exception and now you execute
 				if(!pte->vmachecked) cur->update_presence(vpage, pte);
-
+				
 				if(!(pte->isinvma) && pte->vmachecked){
 					//SEGV out
                                 	cur->stats.segv += 1;
@@ -486,10 +565,10 @@ int main(int argc, char *argv[]){
 						pager = new NRU();
 						break;
 					case 'a':
-						//pager = new Aging();
+						pager = new Aging();
 						break;
 					case 'w':
-						//pager = new Workingset();
+						pager = new Workingset();
 						break;
 				}
 				break;
@@ -535,6 +614,8 @@ int main(int argc, char *argv[]){
 		FRAME* f = (FRAME*)malloc(sizeof(FRAME));
 		f->frameidx = i;
 		f->p = nullptr;
+		f->age = 0;
+		f->lastused = 0;
 		freelist.push_back(f);
 		frametable[i] = f;
 	}
