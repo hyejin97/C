@@ -97,7 +97,7 @@ int oflag;
 int pflag;
 int fflag;
 int sflag;
-bool x, f = false;
+bool x, y, f = false;
 
 vector<Proc*> processes;
 FRAME* frametable[MAX_FRAMES] = {};
@@ -280,9 +280,10 @@ public:
 class Workingset: public Pager{
 public:
 	int hand;
-
+	unsigned long long clock;
 	Workingset(){
 		hand = 0;
+		clock = 0;
 	}
 
 	FRAME* select_victim_frame(){
@@ -290,45 +291,62 @@ public:
 		unsigned int oldest = UINT_MAX;
 		int oldest_idx = -1;
 		int idx = hand;
-		bool found = false;	
-		while(!found){
-			if(hand == idx && oldest_idx != -1){
-                                found = true;
-				fm = frametable[oldest_idx];
-				hand = oldest_idx;
-				hand++;
-				if(hand == num_frames) hand = 0;
-				break;
-                        }
-			
+		int cnt = 0;
+		bool found = false;
+		while(cnt < num_frames){
+			//cout << frametable[hand]->frameidx << "(" << frametable[hand]->p->pagetable[frametable[hand]->vpage].referenced << " " << frametable[hand]->p->pid << ":" << frametable[hand]->vpage << " " << frametable[hand]->lastused << ") ";
 
 			unsigned int r = frametable[hand]->p->pagetable[frametable[hand]->vpage].referenced;
+/**
+			if(oldest > frametable[hand]->lastused){
+                        	oldest_idx = hand;
+                                oldest = frametable[hand]->lastused;
+                        }
+**/
 			if(r == 0){
-				if(inst_num - frametable[hand]->lastused + 1 >= 50){
+				if(inst_num - frametable[hand]->lastused >= 50){
 					fm = frametable[hand];
 					found = true;
+					break;
 				}
 				else{
 					if(oldest > frametable[hand]->lastused){
-						oldest_idx = hand;
-						oldest = frametable[hand]->lastused; 
-					}
+		                                oldest_idx = hand;
+                	                oldest = frametable[hand]->lastused;
+                		        }
 				}
-				
 			}
 			else{ //r == 1, record curtime and reset R
 				frametable[hand]->lastused = inst_num;
 				frametable[hand]->p->pagetable[frametable[hand]->vpage].referenced = 0;			
 			}
 
-			//cout << frametable[hand]->frameidx << "(" << frametable[hand]->p->pagetable[frametable[hand]->vpage].referenced << " " << frametable[hand]->vpage << " " << frametable[hand]->lastused << ") ";
-
+			cnt++;
 			hand++;
 			if(hand == num_frames) hand = 0;
-
-				
 		}
-		//cout << "| " << fm->frameidx << endl;
+
+		if(!found){
+			if(oldest_idx == -1){
+				cnt = 0;
+				while(cnt < num_frames){
+					if(oldest > frametable[hand]->lastused){
+                                                oldest_idx = hand;
+                                                oldest = frametable[hand]->lastused;
+                                        }	
+					cnt++;
+					hand++;
+                        		if(hand == num_frames) hand = 0;
+				}
+			}
+               		fm = frametable[oldest_idx];
+                       	hand = oldest_idx;
+                       	hand++;
+                       	if(hand == num_frames) hand = 0;
+               	}
+		hand = fm->frameidx + 1;
+		if(hand == num_frames) hand = 0;	
+		//cout << "| " << fm->frameidx << " " <<  oldest_idx <<  endl;
 		return fm;
 	}
 };
@@ -369,49 +387,47 @@ int myrandom(int size){
         return randnum;
 }
 
-void do_map(Proc* cur, PTE* pte, int vpage, FRAME* newframe){
-	//reset pte
-	pte->modified = 0;
-	pte->referenced = 0;
+void do_map(Proc* target_p, PTE* pte, int vpage, FRAME* newframe){
 
 	if(pte->pagedout){
-		cur->stats.ins += 1;
+		target_p->stats.ins += 1;
 		if(oflag) cout << " IN" << endl;
 		cost += 3100; 
 	}
 	if(pte->filemapped){
-		cur->stats.fins += 1;
+		target_p->stats.fins += 1;
 		if(oflag) cout << " FIN" << endl;
 		cost += 2800;
 	}
 	if(pte->pagedout == 0 && pte->filemapped == 0){
                 //ZERO
-                cur->stats.zeros += 1;
+                target_p->stats.zeros += 1;
                 if(oflag) cout << " ZERO" << endl;
 		cost += 140;
         }
 	//allocate a frame
 	newframe->vpage = vpage;
-        newframe->p = cur;
+        newframe->p = target_p;
 
         pte->frame = newframe->frameidx;
 	pte->valid = 1;
-	cur->stats.maps += 1;
+	target_p->stats.maps += 1;
 	newframe->age = 0;
 	newframe->lastused = inst_num;
 }
 
 
-void unmap(Proc* cur, PTE* pte, FRAME* newframe, bool exit){
+void unmap(Proc* target_p, PTE* pte, FRAME* newframe, bool exit){
+
 	if(pte->modified && !pte->filemapped && !exit){ //need to access disk
 		pte->pagedout = 1;	
-		cur->stats.outs += 1; //OUT
+		target_p->stats.outs += 1; //OUT
 		if(oflag) cout << " OUT" << endl;
 		cost += 2700;
         }
         if(pte->modified && pte->filemapped){
 		//FOUT	
-		cur->stats.fouts += 1;
+		target_p->stats.fouts += 1;
 		if(oflag) cout << " FOUT" << endl;
 		cost += 2400;
 	}        
@@ -420,8 +436,12 @@ void unmap(Proc* cur, PTE* pte, FRAME* newframe, bool exit){
         newframe->vpage = NULL;
 
 	pte->valid = 0;
-	pte->frame = 0;	
-	cur->stats.unmaps += 1;
+	pte->frame = 0;
+	//reset pte
+	pte->modified = 0;
+	pte->referenced = 0;
+    	
+	target_p->stats.unmaps += 1;
 
 	if(exit){
 		freelist.push_back(newframe);
@@ -432,7 +452,6 @@ void simulate(Proc* cur){
 	char operation;
 	int vpage;
         while(get_next_instruction(operation, vpage)){
-
 		if(oflag) cout << inst_num << ": ==> " << operation << " " << vpage << endl;
 		if(operation == 'c'){
 
@@ -447,15 +466,21 @@ void simulate(Proc* cur){
 		else if(operation == 'e'){
 			//TODO On process exit, traverse the active process’s page table 
 			//and for each valid entry UNMAP the page and FOUT modified filemapped pages. 
+			cout << "EXIT current process " << cur->pid << endl;
 			for(int i = 0; i < MAX_PT; i++){
 				PTE *pte = &cur->pagetable[i];
+				
 				if(pte->valid){
+					if(oflag) cout << " UNMAP " << cur->pid << ":" << i << endl;
+                                	cost += 400;
 					unmap(cur, pte, frametable[pte->frame], true);
 				}
+				cur->pagetable[i] = {0};
 			}
 			//Note that dirty non-fmapped (anonymous) pages are not written back (OUT) as the process exits. The used frame has to be returned to the free pool 
 			proc_exits++;
 			cost += 1250;
+			inst_num++;
 			return;		
 		}
 		else{ //read/write
@@ -475,16 +500,16 @@ void simulate(Proc* cur){
 				}
 
                         	FRAME *newframe = get_frame();
-
 				//cout << newframe->frameidx << " " << newframe->vpage << endl;
 				//if it was mapped, unmap(victim) and then map
 				if(newframe->p){
-					PTE* oldpte = &cur->pagetable[newframe->vpage];
-					if(oflag) cout << " UNMAP " << cur->pid << ":" << newframe->vpage << endl;
+					Proc* target_p = processes[newframe->p->pid]; 
+					PTE* oldpte = &target_p->pagetable[newframe->vpage];
+					if(oflag) cout << " UNMAP " << target_p->pid << ":" << newframe->vpage << endl;
 					cost += 400;
-					unmap(cur, oldpte, newframe, false);		
+					unmap(target_p, oldpte, newframe, false);		
 				}
-
+				
 				do_map(cur, pte, vpage, newframe);
 				if(oflag) cout << " MAP " << newframe->frameidx << endl;
 				cost += 300;
@@ -513,7 +538,10 @@ void simulate(Proc* cur){
 		}
 	inst_num++;
 	if(f) print_frametable();
-	if(x) print_pagetable(cur); 
+	if(x) print_pagetable(cur);
+	if(y){
+		for(int i = 0; i < processes.size(); i++) print_pagetable(processes[i]);
+	} 
 	}
 
 }
@@ -622,6 +650,7 @@ int main(int argc, char *argv[]){
 							x = true;
 							break;
 						case 'y':
+							y = true;
 							break;
 						case 'f':
 							f = true;
@@ -709,8 +738,13 @@ int main(int argc, char *argv[]){
 
 	for(int i = 0; i < processes.size(); i++){
 		simulate(processes[i]);
-		if(pflag) print_pagetable(processes[i]);	
 	}
+
+	if(pflag){
+		for(int i = 0; i < processes.size(); i++){
+			print_pagetable(processes[i]);
+		}
+	}	
 	if(fflag) print_frametable();
 	if(sflag){
 		for(int i = 0; i < processes.size(); i++){
